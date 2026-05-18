@@ -1,3 +1,11 @@
+"""
+Log Processor Worker
+
+This script runs as a background service to consume log payloads from the Redis
+queue that were pushed by the FastAPI ingestor. It acts as the bridge between 
+ingestion and the upcoming vectorization/LLM processing layers.
+"""
+
 import json
 import logging
 from utils.queue import redis_client
@@ -12,6 +20,10 @@ logger = logging.getLogger(__name__)
 def process_log(payload_str: str) -> bool:
     """
     Deserialize and process a log payload from the queue.
+    
+    Note: Currently, this acts as a placeholder that simply acknowledges
+    and logs the payload. In the future, this function will format the 
+    data and send it to Qdrant for vectorization and Ollama for LLM analysis.
     """
     try:
         data = json.loads(payload_str)
