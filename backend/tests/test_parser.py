@@ -112,3 +112,71 @@ def test_warning_level_normalization():
 
     assert parsed is not None
     assert parsed["level"] == "WARN"
+
+from utils.parser import PARSER_METRICS
+
+
+def reset_parser_metrics():
+    for key in PARSER_METRICS:
+        PARSER_METRICS[key] = 0
+
+
+def test_parser_metrics_standard_log():
+    reset_parser_metrics()
+
+    log = "[2026-05-16 10:30:00] INFO: parser metrics test"
+
+    parsed = LogParser.parse_line(log)
+
+    assert parsed is not None
+
+    assert PARSER_METRICS["parsed_logs"] == 1
+    assert PARSER_METRICS["standard_logs"] == 1
+
+
+def test_parser_metrics_failed_log():
+    reset_parser_metrics()
+
+    LogParser.parse_line("invalid parser format")
+
+    assert PARSER_METRICS["failed_logs"] == 1
+
+
+def test_parser_metrics_empty_log():
+    reset_parser_metrics()
+
+    LogParser.parse_line("")
+
+    assert PARSER_METRICS["empty_logs"] == 1
+    assert PARSER_METRICS["failed_logs"] == 1
+
+
+def test_parser_metrics_structured_json():
+    reset_parser_metrics()
+
+    log = """
+    {
+        "timestamp": "2026-05-16T10:30:00Z",
+        "level": "INFO",
+        "message": "json metrics test"
+    }
+    """
+
+    parsed = LogParser.parse_line(log)
+
+    assert parsed is not None
+
+    assert PARSER_METRICS["structured_json_logs"] == 1
+    assert PARSER_METRICS["parsed_logs"] == 1
+
+
+def test_timestamp_failure_metric():
+    reset_parser_metrics()
+
+    log = "[invalid-timestamp] INFO: timestamp failure"
+
+    parsed = LogParser.parse_line(log)
+
+    assert parsed is not None
+
+    assert PARSER_METRICS["timestamp_failures"] == 1

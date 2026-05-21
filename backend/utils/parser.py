@@ -10,6 +10,22 @@ from utils.metadata import extract_metadata
 from utils.timestamp import normalize_timestamp
 
 logger = logging.getLogger(__name__)
+PARSER_METRICS = {
+    "parsed_logs": 0,
+    "failed_logs": 0,
+    "structured_json_logs": 0,
+    "standard_logs": 0,
+    "timestamp_failures": 0,
+    "empty_logs": 0
+}
+
+
+def increment_parser_metric(metric_name: str):
+    """
+    Safely increment parser telemetry counters.
+    """
+    if metric_name in PARSER_METRICS:
+        PARSER_METRICS[metric_name] += 1
 
 VALID_LEVELS = {
     "INFO",
@@ -52,6 +68,9 @@ class LogParser:
             raw_timestamp = parsed.get("timestamp", "")
             timestamp = normalize_timestamp(raw_timestamp) or raw_timestamp
 
+            if raw_timestamp and timestamp == raw_timestamp:
+                increment_parser_metric("timestamp_failures")
+
             level = LogParser._normalize_level(parsed.get("level", "INFO"))
             message = parsed.get("message", "")
 
@@ -66,6 +85,10 @@ class LogParser:
             extracted_metadata = extract_metadata(message)
             metadata.update(extracted_metadata)
 
+            increment_parser_metric("parsed_logs")
+            
+            increment_parser_metric("structured_json_logs")
+
             return {
                 "timestamp": timestamp,
                 "level": level,
@@ -76,10 +99,13 @@ class LogParser:
             }
 
         except json.JSONDecodeError:
+            
+            increment_parser_metric("failed_logs")
             logger.debug("Malformed JSON log detected.")
             return None
 
         except Exception as e:
+            increment_parser_metric("failed_logs")
             logger.warning(f"Unexpected JSON parsing error: {e}", exc_info=True)
             return None
 
@@ -89,6 +115,8 @@ class LogParser:
         Parses a single log line into a standardized dictionary.
         """
         if not line or not line.strip():
+            increment_parser_metric("empty_logs")
+            increment_parser_metric("failed_logs")
             return None
 
         clean_line = line.strip()
@@ -114,8 +142,12 @@ class LogParser:
 
                 timestamp = normalize_timestamp(raw_ts) or raw_ts
 
-                metadata = extract_metadata(message)
+                if raw_ts and timestamp == raw_ts:
+                    increment_parser_metric("timestamp_failures")
 
+                metadata = extract_metadata(message)
+                increment_parser_metric("parsed_logs")
+                increment_parser_metric("standard_logs")
                 return {
                     "timestamp": timestamp,
                     "level": level,
@@ -128,5 +160,6 @@ class LogParser:
         logger.debug(
             f"Unparseable log line (no patterns matched): {clean_line[:100]}..."
         )
-
+        
+        increment_parser_metric("failed_logs")
         return None

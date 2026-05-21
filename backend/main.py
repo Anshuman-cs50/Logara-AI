@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Body, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from qdrant_client import QdrantClient
-from utils.parser import LogParser
+from utils.parser import LogParser, PARSER_METRICS
 from utils.queue import redis_client
 from utils.redaction import build_default_redactor
 from utils.constants import REDACT_ENABLED, REDACT_PATTERNS, REDACT_IPV4
@@ -166,4 +166,13 @@ async def health_check(response: Response):
     return {
         "status": overall,
         "services": services
+    }
+
+@app.get("/metrics/parser")
+async def parser_metrics():
+    """
+    Exposes lightweight parser observability telemetry.
+    """
+    return {
+        "parser_metrics": PARSER_METRICS
     }

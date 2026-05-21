@@ -32,7 +32,7 @@ def normalize_timestamp(ts_str: str) -> Optional[str]:
             return parsed_dt.isoformat()
         except ValueError:
             continue
-
+    
     logger.debug(
         f"Timestamp '{ts_str}' did not match supported formats. Returning raw."
     )
