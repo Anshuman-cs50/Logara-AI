@@ -1,10 +1,14 @@
-fastapi
+fastapi[standard]
 uvicorn
 python-dotenv
 pydantic
+pydantic-settings
 sqlalchemy
 qdrant-client
 langchain-ollama
 langchain-huggingface
 ollama
 sentence-transformers
+redis
+pytest
+httpx
