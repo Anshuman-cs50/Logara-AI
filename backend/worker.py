@@ -2,7 +2,7 @@
 Log Processor Worker
 
 Consumes log payloads from the Redis queue and processes them for
-future vectorization and LLM analysis workflows.
+vectorization and storage in Qdrant.
 """
 from anomaly.detector import analyze_log
 import json
@@ -345,9 +345,15 @@ def run_worker():
     """
     logger.info("Starting Log Processor worker. Waiting for logs...")
 
+    settings = get_settings()
+    queue_name = settings.redis_queue_name
+
     while True:
         try:
-            result = redis_client.brpop("log_queue", timeout=1)
+            result = redis_client.brpop(
+                queue_name,
+                timeout=1,
+            )
 
             if result:
                 queue_name, payload = result
