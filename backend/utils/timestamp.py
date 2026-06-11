@@ -51,6 +51,15 @@ def normalize_timestamp(ts_str: str) -> Optional[str]:
     if not ts_str:
         return None
 
+    # Detect Unix epoch (seconds or milliseconds)
+    try:
+        val = float(ts_str.strip())
+        if val > 1e10:  # epoch-ms, convert to seconds
+            val = val / 1000
+        return datetime.fromtimestamp(val, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    except (ValueError, OSError):
+        pass
+    
     clean_ts = ts_str.strip()
 
     # Return None if string is empty after stripping
