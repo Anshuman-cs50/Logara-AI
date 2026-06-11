@@ -10,7 +10,7 @@ def test_root_endpoint():
     assert response.status_code == 200
     assert response.json() == {"message": "Welcome to Logara AI API", "status": "active"}
 
-@patch("main.redis_client.ping")
+@patch("services.health.redis_client.ping")
 @patch("services.health.qdrant_client.get_collections")
 @patch("services.health.ollama_client.health_check")
 def test_health_endpoint_all_healthy(mock_ollama_health, mock_qdrant_get_collections, mock_redis_ping):
@@ -32,7 +32,7 @@ def test_health_endpoint_all_healthy(mock_ollama_health, mock_qdrant_get_collect
     assert data["services"]["ollama"]["status"] == "healthy"
 
 
-@patch("main.redis_client.ping")
+@patch("services.health.redis_client.ping")
 @patch("services.health.qdrant_client.get_collections")
 @patch("services.health.ollama_client.health_check")
 def test_health_redis_unhealthy(mock_ollama_health, mock_qdrant_get_collections, mock_redis_ping):
@@ -55,7 +55,7 @@ def test_health_redis_unhealthy(mock_ollama_health, mock_qdrant_get_collections,
     assert data["services"]["ollama"]["status"] == "healthy"
 
 
-@patch("main.redis_client.ping")
+@patch("services.health.redis_client.ping")
 @patch("services.health.qdrant_client.get_collections")
 @patch("services.health.ollama_client.health_check")
 def test_health_qdrant_unhealthy(mock_ollama_health, mock_qdrant_get_collections, mock_redis_ping):
@@ -78,7 +78,7 @@ def test_health_qdrant_unhealthy(mock_ollama_health, mock_qdrant_get_collections
     assert data["services"]["ollama"]["status"] == "healthy"
 
 
-@patch("main.redis_client.ping")
+@patch("services.health.redis_client.ping")
 @patch("services.health.qdrant_client.get_collections")
 @patch("services.health.ollama_client.health_check")
 def test_health_ollama_unhealthy(mock_ollama_health, mock_qdrant_get_collections, mock_redis_ping):
@@ -114,11 +114,11 @@ def test_ingest_whitespace_log():
 def test_ingest_raw_fallback(mock_lpush):
     response = client.post("/ingest", json={"log_data": "this is not standard log format"})
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "accepted_raw_queued",
-        "message": "this is not standard log format",
-        "redaction_summary": {},
-    }
+    res_data = response.json()
+    assert res_data["status"] == "accepted_raw_queued"
+    assert res_data["message"] == "this is not standard log format"
+    assert res_data["redaction_summary"] == {}
+    assert "structured_output" in res_data
     mock_lpush.assert_called_once()
 
 @patch("utils.queue.redis_client.lpush")
@@ -234,8 +234,147 @@ def test_ingest_structured_accepts_service_id_field(mock_lpush):
     )
 
     assert response.status_code == 200
-
     data = response.json()
     assert data["parsed"]["service_id"] == "payments-api"
     assert data["metadata"]["service_id"] == "payments-api"
     assert mock_lpush.called
+
+
+# ============================================================================
+# Retrieval and Semantic Search Endpoints Tests
+# ============================================================================
+
+@patch("routes.retrieval.LogService.get_logs")
+def test_get_logs_success(mock_get_logs):
+    mock_get_logs.return_value = (
+        [
+            {
+                "id": "1",
+                "timestamp": "2026-05-16T10:30:00",
+                "level": "ERROR",
+                "message": "auth-service failed",
+                "parser_type": "standard",
+                "raw": "[2026-05-16 10:30:00] ERROR: auth-service failed",
+                "metadata": {"service": "auth-service"}
+            }
+        ],
+        1
+    )
+
+    response = client.get("/logs?page=1&limit=10")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["logs"]) == 1
+    assert data["logs"][0]["id"] == "1"
+    assert data["logs"][0]["level"] == "ERROR"
+    assert data["pagination"]["total"] == 1
+    assert data["pagination"]["pages"] == 1
+
+
+def test_get_logs_invalid_pagination():
+    response = client.get("/logs?page=0&limit=10")
+    assert response.status_code == 400
+    assert "Page number must be 1 or greater" in response.json()["detail"]
+
+    response = client.get("/logs?page=1&limit=101")
+    assert response.status_code == 400
+    assert "Limit must be between 1 and 100" in response.json()["detail"]
+
+
+@patch("routes.retrieval.LogService.semantic_search")
+def test_semantic_search_success(mock_semantic_search):
+    mock_semantic_search.return_value = (
+        [
+            {
+                "id": "1",
+                "timestamp": "2026-05-16T10:30:00",
+                "level": "ERROR",
+                "message": "auth-service failed",
+                "parser_type": "standard",
+                "raw": "[2026-05-16 10:30:00] ERROR: auth-service failed",
+                "metadata": {"service": "auth-service"}
+            }
+        ],
+        "The authentication service failed to start."
+    )
+
+    response = client.post("/search", json={"query": "auth failed", "limit": 5})
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["logs"]) == 1
+    assert data["logs"][0]["id"] == "1"
+    assert data["answer"] == "The authentication service failed to start."
+
+
+def test_semantic_search_empty_query():
+    response = client.post("/search", json={"query": ""})
+    assert response.status_code == 400
+    assert "Search query cannot be empty" in response.json()["detail"]
+
+
+@patch("integrations.redis.redis_client.lpush")
+def test_batch_ingestion_partial_success(mock_lpush):
+    payload = {
+        "logs": [
+            {
+                "timestamp": "2026-05-20T10:00:00Z",
+                "level": "INFO",
+                "message": "valid log entry",
+                "service_id": "test-service",
+            },
+            {
+                "timestamp": "2026-05-20T10:01:00Z",
+                "level": "INFO",
+                "message": "",
+                "service_id": "test-service",
+            },
+        ]
+    }
+
+    response = client.post(
+        "/ingest",
+        json=payload,
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["status"] == "partial_success"
+    assert data["processed_records"] == 1
+    assert data["failed_records"] == 1
+
+    assert len(data["failures"]) == 1
+    assert data["failures"][0]["record_index"] == 1
+
+
+@patch("integrations.redis.redis_client.lpush")
+def test_batch_ingestion_full_success(mock_lpush):
+    payload = {
+        "logs": [
+            {
+                "timestamp": "2026-05-20T10:00:00Z",
+                "level": "INFO",
+                "message": "service started",
+                "service_id": "test-service",
+            },
+            {
+                "timestamp": "2026-05-20T10:01:00Z",
+                "level": "ERROR",
+                "message": "database timeout",
+                "service_id": "test-service",
+            },
+        ]
+    }
+
+    response = client.post(
+        "/ingest",
+        json=payload,
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["processed_records"] == 2
+    assert data["failed_records"] == 0
+    assert data["failures"] == []
