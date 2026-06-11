@@ -300,6 +300,75 @@ jobs:
               }
             }
 
+            // --- PART 3: Retroactively Close Issues Linked to Already-Merged PRs ---
+            console.log("\\n--- PART 3: Scanning historically merged PRs for linked open issues ---");
+
+            const closingKeywords = /(?:closes?|fixes?|resolves?)\\s+#(\\d+)/gi;
+
+            // Fetch all merged PRs (paginated, up to 200)
+            const mergedPRs = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'closed',
+              per_page: 100
+            });
+
+            const actuallyMerged = mergedPRs.filter(pr => pr.merged_at !== null);
+            console.log(`Found ${actuallyMerged.length} merged PRs to scan.`);
+
+            for (const pr of actuallyMerged) {
+              const prBody = pr.body || '';
+              const matches = [...prBody.matchAll(closingKeywords)];
+              if (matches.length === 0) continue;
+
+              const issueNumbers = [...new Set(matches.map(m => parseInt(m[1], 10)))];
+
+              for (const issueNumber of issueNumbers) {
+                try {
+                  const { data: issue } = await github.rest.issues.get({
+                    owner,
+                    repo,
+                    issue_number: issueNumber
+                  });
+
+                  // Skip if already closed or if it's a PR
+                  if (issue.state === 'closed' || issue.pull_request) continue;
+
+                  // Close the issue
+                  await github.rest.issues.update({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    state: 'closed',
+                    state_reason: 'completed'
+                  });
+
+                  // Post resolution comment (only if not already posted)
+                  const comments = await github.rest.issues.listComments({
+                    owner,
+                    repo,
+                    issue_number: issueNumber
+                  });
+                  const alreadyResolved = comments.data.some(c => c.body.includes('Issue Resolved!'));
+
+                  if (!alreadyResolved) {
+                    await github.rest.issues.createComment({
+                      owner,
+                      repo,
+                      issue_number: issueNumber,
+                      body: `✅ **Issue Resolved!**\\n\\nThis issue has been closed automatically because it was linked to PR #${pr.number} — **"${pr.title}"** — which was successfully merged into \`main\`. 🎉\\n\\nThank you for your contribution! 🚀`
+                    });
+                  }
+
+                  console.log(`Retroactively closed issue #${issueNumber} (linked to merged PR #${pr.number}).`);
+                } catch (error) {
+                  console.log(`Could not process issue #${issueNumber}: ${error.message}`);
+                }
+              }
+            }
+
+            console.log("\\n✅ Batch triage complete — issues, PRs, and historical backlog all processed!");
+
   # JOB 4: Auto-Close Linked Issues After a Successful PR Merge
   close_linked_issues:
     if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
